@@ -20,6 +20,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    pinecone_api_key: str = ""
+    pinecone_host: str = ""
 
 
 
