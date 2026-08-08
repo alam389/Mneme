@@ -11,3 +11,16 @@ class IngestionResponse(BaseModel):
     source: str
     received_items: int
     message: str
+
+
+class PromptRequest(BaseModel):
+    prompt: str = Field(..., description="Prompt to send to the model")
+    model: str | None = Field(
+        default=None,
+        description="OpenRouter model id, e.g. 'openai/gpt-4o-mini'. Falls back to MODEL_NAME.",
+    )
+
+
+class PromptResponse(BaseModel):
+    model: str
+    output: str

@@ -1,3 +1,5 @@
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.7.0
+pydantic-settings>=2.7.0
+openai>=1.40.0
