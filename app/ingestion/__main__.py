@@ -10,6 +10,7 @@ import sys
 
 from pydantic import ValidationError
 
+from app.config import settings
 from app.ingestion.service import IngestionService
 from app.models.schemas import IngestionRequest
 
@@ -21,8 +22,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--source",
-        default="/Users/anthonylam/Documents/Education/Consulting/ICC Comprehensive Recruiting Guide 2025-2026-1.pdf",
-        help="Document URL or local path to ingest",
+        default=settings.default_source,
+        help="Document URL or local path to ingest (defaults to DEFAULT_SOURCE)",
     )
     parser.add_argument(
         "--payload",
@@ -34,6 +35,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if not args.source:
+        print(
+            "error: no source given; pass --source or set DEFAULT_SOURCE in .env",
+            file=sys.stderr,
+        )
+        return 2
 
     try:
         payload = json.loads(args.payload)

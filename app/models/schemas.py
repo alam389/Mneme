@@ -6,12 +6,19 @@ class IngestionRequest(BaseModel):
     payload: dict = Field(default_factory=dict, description="Payload to ingest")
 
 
+class ConvertedDocument(BaseModel):
+    source: str = Field(..., description="Path or URL this document came from")
+    content: str = Field(default="", description="Extracted document content as Markdown")
+
+
 class IngestionResponse(BaseModel):
     status: str
     source: str
     received_items: int
     message: str
-    content: str = Field(default="", description="Extracted document content as Markdown")
+    documents: list[ConvertedDocument] = Field(
+        default_factory=list, description="One entry per converted document"
+    )
 
 
 class PromptRequest(BaseModel):
