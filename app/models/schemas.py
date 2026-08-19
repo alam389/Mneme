@@ -11,6 +11,7 @@ class IngestionResponse(BaseModel):
     source: str
     received_items: int
     message: str
+    content: str = Field(default="", description="Extracted document content as Markdown")
 
 
 class PromptRequest(BaseModel):

@@ -7,8 +7,8 @@ from app.models.schemas import (
     PromptRequest,
     PromptResponse,
 )
+from app.ingestion import IngestionService
 from app.services import llm
-from app.services.ingestion import IngestionService
 
 router = APIRouter()
 service = IngestionService()

@@ -38,12 +38,6 @@ app = FastAPI(
 app.include_router(router, prefix=settings.api_prefix)
 
 
-
-
 @app.get("/")
 def read_root() -> dict[str, str]:
-    return {
-        "message": "Mneme ingestion service is up",
-        "environment": settings.environment,
-        "app_name": settings.app_name,
-    }
+    return {"status": "ok"}
