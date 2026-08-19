@@ -1,3 +1,3 @@
-from app.ingestion.service import IngestionService
+from app.ingestion.conversion import IngestionService
 
 __all__ = ["IngestionService"]

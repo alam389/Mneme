@@ -1,8 +1,14 @@
 from pathlib import Path
 
 from docling.datamodel.base_models import FormatToExtensions, InputFormat
-from docling.document_converter import DocumentConverter
+from docling.datamodel.pipeline_options import EasyOcrOptions, ThreadedPdfPipelineOptions
+from docling.document_converter import (
+    DocumentConverter,
+    ImageFormatOption,
+    PdfFormatOption,
+)
 
+from app.ingestion.chunking import DocumentChunker
 from app.models.schemas import ConvertedDocument, IngestionRequest, IngestionResponse
 
 ALLOWED_FORMATS = [
@@ -25,9 +31,26 @@ class IngestionConfigError(RuntimeError):
     """Raised when the requested source document cannot be found."""
 
 
+# Docling picks an OCR engine automatically, and the one it lands on defaults to a
+# Chinese recognition model, which garbles English text. Name the engine and the
+# language explicitly so that cannot happen.
+PIPELINE_OPTIONS = ThreadedPdfPipelineOptions(
+    ocr_options=EasyOcrOptions(lang=["en"]),
+)
+
+
 class IngestionService:
     def __init__(self) -> None:
-        self._converter = DocumentConverter(allowed_formats=ALLOWED_FORMATS)
+        # PDFs and images run the same pipeline but need separate entries because
+        # they use different backends; they share one options object.
+        self._converter = DocumentConverter(
+            allowed_formats=ALLOWED_FORMATS,
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=PIPELINE_OPTIONS),
+                InputFormat.IMAGE: ImageFormatOption(pipeline_options=PIPELINE_OPTIONS),
+            },
+        )
+        self._chunker = DocumentChunker()
 
     def _resolve(self, source: str) -> list[str]:
         """Expand a URL, file, or directory into the list of documents to convert."""
@@ -57,14 +80,18 @@ class IngestionService:
         documents = [
             ConvertedDocument(
                 source=str(result.input.file),
-                content=result.document.export_to_markdown(),
+                chunks=self._chunker.chunk(result.document),
             )
             for result in self._converter.convert_all(sources, raises_on_error=False)
             if result.document is not None
         ]
 
         failed = len(sources) - len(documents)
-        message = f"converted {len(documents)} of {len(sources)} documents"
+        total_chunks = sum(len(doc.chunks) for doc in documents)
+        message = (
+            f"converted {len(documents)} of {len(sources)} documents "
+            f"into {total_chunks} chunks"
+        )
         if failed:
             message += f" ({failed} failed)"
 

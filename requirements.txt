@@ -5,3 +5,4 @@ pydantic-settings>=2.7.0
 openai>=1.40.0
 pinecone>=9.0.0
 docling>=2.120.3
+easyocr>=1.7.2

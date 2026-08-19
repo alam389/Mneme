@@ -11,8 +11,8 @@ import sys
 from pydantic import ValidationError
 
 from app.config import settings
-from app.ingestion.service import IngestionService
-from app.models.schemas import IngestionRequest
+from app.ingestion.conversion import IngestionService
+from app.models.schemas import IngestionRequest, IngestionResponse
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -30,7 +30,35 @@ def build_parser() -> argparse.ArgumentParser:
         default="{}",
         help="Payload as an inline JSON object",
     )
+    parser.add_argument(
+        "--format",
+        choices=("json", "text"),
+        default="json",
+        help="json for the full response, text for a readable chunk listing",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="With --format text, show only the first N chunks per document (0 = all)",
+    )
     return parser
+
+
+def render_text(response: IngestionResponse, limit: int = 0) -> str:
+    """Readable per-chunk listing, for inspecting output by eye."""
+    lines = [response.message, ""]
+    for doc in response.documents:
+        shown = doc.chunks[:limit] if limit > 0 else doc.chunks
+        lines.append(f"# {doc.source} ({len(doc.chunks)} chunks)")
+        for i, chunk in enumerate(shown):
+            trail = " > ".join(chunk.headings) if chunk.headings else "(no heading)"
+            lines.append(f"  [{i}] {trail}")
+            lines.append(f"      {chunk.text[:300]}")
+        if len(shown) < len(doc.chunks):
+            lines.append(f"  ... {len(doc.chunks) - len(shown)} more")
+        lines.append("")
+    return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -53,7 +81,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     response = IngestionService().process(request)
-    print(response.model_dump_json(indent=2))
+    if args.format == "text":
+        print(render_text(response, args.limit))
+    else:
+        print(response.model_dump_json(indent=2))
     return 0
 
 

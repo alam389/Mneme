@@ -6,9 +6,18 @@ class IngestionRequest(BaseModel):
     payload: dict = Field(default_factory=dict, description="Payload to ingest")
 
 
+class Chunk(BaseModel):
+    text: str = Field(..., description="Chunk body, prefixed with its headings")
+    headings: list[str] = Field(
+        default_factory=list, description="Heading trail this chunk sits under"
+    )
+
+
 class ConvertedDocument(BaseModel):
     source: str = Field(..., description="Path or URL this document came from")
-    content: str = Field(default="", description="Extracted document content as Markdown")
+    chunks: list[Chunk] = Field(
+        default_factory=list, description="Retrieval-sized spans of this document"
+    )
 
 
 class IngestionResponse(BaseModel):
