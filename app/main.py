@@ -6,7 +6,7 @@ from fastapi import FastAPI
 
 from app.api.routes import router
 from app.config import settings
-from app.services.embedding import open_vector_store
+from app.services.vector_store import open_vector_store
 
 logger = logging.getLogger(__name__)
 

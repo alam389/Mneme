@@ -13,7 +13,9 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     model_name: str = "openai/gpt-4o-mini"
     ingestion_timeout_seconds: int = 30
+    ingestion_doc_source: str = "/Users/anthonylam"
     default_source: str = ""
+    hf_token: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -52,7 +52,7 @@ class IngestionService:
         )
         self._chunker = DocumentChunker()
 
-    def _resolve(self, source: str) -> list[str]:
+    def resolve(self, source: str) -> list[str]:
         """Expand a URL, file, or directory into the list of documents to convert."""
         if "://" in source:
             return [source]
@@ -95,10 +95,4 @@ class IngestionService:
         if failed:
             message += f" ({failed} failed)"
 
-        return IngestionResponse(
-            status="ok" if documents else "error",
-            source=payload.source,
-            received_items=len(documents),
-            message=message,
-            documents=documents,
-        )
+        return documents, message
