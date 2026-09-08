@@ -5,6 +5,7 @@ pipeline can be exercised from a shell without booting uvicorn.
 """
 
 import argparse
+import asyncio
 import json
 import sys
 
@@ -12,7 +13,10 @@ from pydantic import ValidationError
 
 from app.config import settings
 from app.ingestion.conversion import IngestionService
+from app.ingestion.pipeline import IngestionPipeline
 from app.models.schemas import IngestionRequest, IngestionResponse
+from app.services.llm import LLMConfigError
+from app.services.vector_store import VectorStoreConfigError, open_vector_store
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,6 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="With --format text, show only the first N chunks per document (0 = all)",
     )
     return parser
+
+
+def _fail(exc: Exception) -> int:
+    print(f"error: {exc}", file=sys.stderr)
+    return 2
 
 
 def render_text(response: IngestionResponse, limit: int = 0) -> str:
@@ -77,15 +86,24 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError(f"payload must be a JSON object, got {type(payload).__name__}")
         request = IngestionRequest(source=args.source, payload=payload)
     except (json.JSONDecodeError, ValueError, ValidationError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
+        return _fail(exc)
 
-    response = IngestionService().process(request)
+    try:
+        response = asyncio.run(_run(request))
+    except (VectorStoreConfigError, LLMConfigError) as exc:
+        return _fail(exc)
+
     if args.format == "text":
         print(render_text(response, args.limit))
     else:
         print(response.model_dump_json(indent=2))
     return 0
+
+
+async def _run(request: IngestionRequest) -> IngestionResponse:
+    async with open_vector_store() as index:
+        pipeline = IngestionPipeline(IngestionService(), index)
+        return await pipeline.run(request)
 
 
 if __name__ == "__main__":

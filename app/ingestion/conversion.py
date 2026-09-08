@@ -74,7 +74,7 @@ class IngestionService:
         raise IngestionConfigError(f"source not found: {path}")
 
     def process(self, payload: IngestionRequest) -> IngestionResponse:
-        sources = self._resolve(payload.source)
+        sources = self.resolve(payload.source)
 
         # raises_on_error=False so one unreadable file does not abort the batch.
         documents = [
