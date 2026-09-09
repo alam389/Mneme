@@ -3,17 +3,29 @@
 import asyncio
 import hashlib
 import logging
+from pathlib import Path
 
 from pinecone import AsyncIndex
 
 from app.ingestion.conversion import IngestionService
 from app.ingestion.embedding_model import embed
-from app.ingestion.upload_vectors import VectorUpserter
+from app.ingestion.vector_tools import VectorUpserter
 from app.models.schemas import ConvertedDocument, IngestionRequest, IngestionResponse
 from app.services.llm import LLMConfigError
 from app.services.vector_store import VectorStoreConfigError
 
 logger = logging.getLogger(__name__)
+
+
+def _namespace_for(source: str) -> str:
+    """Partition vectors by the document's containing folder.
+
+    URLs have no folder to key off of, so they fall back to the default
+    (empty-string) namespace.
+    """
+    if "://" in source:
+        return ""
+    return Path(source).parent.name
 
 
 class IngestionPipeline:
@@ -65,4 +77,4 @@ class IngestionPipeline:
             }
             for i, (chunk, vector) in enumerate(zip(document.chunks, values))
         ]
-        await self._upserter.upsert(vectors)
+        await self._upserter.upsert(vectors, namespace=_namespace_for(document.source))
