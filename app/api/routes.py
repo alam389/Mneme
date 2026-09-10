@@ -21,7 +21,14 @@ def health_check() -> dict[str, str]:
 
 @router.post("/ingest", response_model=IngestionResponse)
 def ingest(payload: IngestionRequest) -> IngestionResponse:
-    return service.process(payload)
+    documents, message = service.process(payload)
+    return IngestionResponse(
+        status="ok" if documents else "error",
+        source=payload.source,
+        received_items=len(documents),
+        message=message,
+        documents=documents,
+    )
 
 
 @router.post("/prompt", response_model=PromptResponse)

@@ -2,17 +2,18 @@
 
 Run with ``python -m app.mcp_server`` (stdio transport) and register it with
 a client, e.g. ``claude mcp add mneme -- python -m app.mcp_server`` from the
-project's venv. Holds one Pinecone connection for the process lifetime, the
-same pattern ``app.main`` uses for the HTTP server.
+project's venv. Holds one Pinecone connection and one Neo4j driver for the
+process lifetime, the same pattern ``app.main`` uses for the HTTP server.
 """
 
 import json
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 
 from mcp.server.mcpserver import Context, MCPServer
+from neo4j import AsyncDriver
 from pinecone import AsyncIndex
 
 from app.config import settings
@@ -21,6 +22,7 @@ from app.ingestion.embedding_model import embed
 from app.ingestion.pipeline import IngestionPipeline
 from app.ingestion.vector_tools import VectorUpserter
 from app.models.schemas import IngestionRequest
+from app.services.graph_store import open_graph_store
 from app.services.llm import complete
 from app.services.vector_store import VectorStoreConfigError, open_vector_store
 
@@ -30,17 +32,25 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ServerContext:
     index: AsyncIndex | None
+    graph_driver: AsyncDriver | None
 
 
 @asynccontextmanager
 async def lifespan(server: MCPServer) -> AsyncIterator[ServerContext]:
-    if not (settings.pinecone_api_key and settings.pinecone_host):
-        logger.warning("Pinecone is not configured; ingest_source and search_notes will error")
-        yield ServerContext(index=None)
-        return
+    async with AsyncExitStack() as stack:
+        index = None
+        if settings.pinecone_api_key and settings.pinecone_host:
+            index = await stack.enter_async_context(open_vector_store())
+        else:
+            logger.warning("Pinecone is not configured; ingest_source and search_notes will error")
 
-    async with open_vector_store() as index:
-        yield ServerContext(index=index)
+        graph_driver = None
+        if settings.neo4j_uri and settings.neo4j_username and settings.neo4j_password:
+            graph_driver = await stack.enter_async_context(open_graph_store())
+        else:
+            logger.warning("Neo4j is not configured; graph tools will error")
+
+        yield ServerContext(index=index, graph_driver=graph_driver)
 
 
 mcp = MCPServer("mneme", lifespan=lifespan)

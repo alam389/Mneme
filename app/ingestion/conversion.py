@@ -9,7 +9,7 @@ from docling.document_converter import (
 )
 
 from app.ingestion.chunking import DocumentChunker
-from app.models.schemas import ConvertedDocument, IngestionRequest, IngestionResponse
+from app.models.schemas import ConvertedDocument, IngestionRequest
 
 ALLOWED_FORMATS = [
     InputFormat.PDF,
@@ -73,7 +73,7 @@ class IngestionService:
 
         raise IngestionConfigError(f"source not found: {path}")
 
-    def process(self, payload: IngestionRequest) -> IngestionResponse:
+    def process(self, payload: IngestionRequest) -> tuple[list[ConvertedDocument], str]:
         sources = self.resolve(payload.source)
 
         # raises_on_error=False so one unreadable file does not abort the batch.
