@@ -14,10 +14,8 @@ Two ways in:
 """
 
 import asyncio
-import hashlib
 import logging
 from functools import lru_cache
-from pathlib import Path
 
 from app.ingestion.conversion import IngestionService
 from app.ingestion.jobs import InMemoryJobStore, JobStore
@@ -38,17 +36,6 @@ logger = logging.getLogger(__name__)
 # Config errors mean the process is misconfigured, not that one Document is
 # bad, so they fail the whole Job instead of being recorded per Document.
 FATAL_ERRORS = (LLMConfigError, VectorStoreConfigError)
-
-
-def _namespace_for(source: str) -> str:
-    """Partition vectors by the Document's containing folder.
-
-    URLs have no folder to key off of, so they fall back to the default
-    (empty-string) namespace.
-    """
-    if "://" in source:
-        return ""
-    return Path(source).parent.name
 
 
 @lru_cache
@@ -148,7 +135,7 @@ class Ingestor:
 
         chunked = [document for document in documents if document.chunks]
         results = await asyncio.gather(
-            *(self._embed_and_store(document) for document in chunked),
+            *(self._store_document(document, request.replace) for document in chunked),
             return_exceptions=True,
         )
 
@@ -164,11 +151,7 @@ class Ingestor:
                     DocumentOutcome(source=document.source, error=str(result))
                 )
             else:
-                outcomes.append(
-                    DocumentOutcome(
-                        source=document.source, chunks=len(document.chunks)
-                    )
-                )
+                outcomes.append(result)
 
         # Documents that converted but produced nothing to store are neither a
         # success nor a failure; record them so the counts add up.
@@ -178,8 +161,15 @@ class Ingestor:
             if not document.chunks
         )
 
-        stored = [outcome for outcome in outcomes if outcome.ok and outcome.chunks]
+        stored = [
+            outcome
+            for outcome in outcomes
+            if outcome.ok and outcome.chunks and not outcome.skipped
+        ]
+        skipped = [outcome for outcome in outcomes if outcome.skipped]
         failed = [outcome for outcome in outcomes if not outcome.ok]
+        if skipped:
+            message += f", {len(skipped)} already stored"
         if failed:
             message += f", {len(failed)} document(s) failed to embed"
 
@@ -187,25 +177,30 @@ class Ingestor:
             source=request.source,
             converted=len(documents),
             stored=len(stored),
+            skipped=len(skipped),
             total_chunks=sum(outcome.chunks for outcome in stored),
             documents=outcomes,
             message=message,
         )
 
-    async def _embed_and_store(self, document: ConvertedDocument) -> None:
-        vectors = await self._embedder.embed([chunk.text for chunk in document.chunks])
+    async def _store_document(
+        self, document: ConvertedDocument, replace: bool
+    ) -> DocumentOutcome:
+        """Embed and store one Document, unless it is already stored.
 
-        doc_id = hashlib.sha1(document.source.encode()).hexdigest()[:16]
-        records = [
-            {
-                "id": f"{doc_id}:{i}",
-                "values": vector,
-                "metadata": {
-                    "source": document.source,
-                    "chunk_text": chunk.text,
-                    "headings": chunk.headings,
-                },
-            }
-            for i, (chunk, vector) in enumerate(zip(document.chunks, vectors))
-        ]
-        await self._store.upsert(records, namespace=_namespace_for(document.source))
+        The check happens before embedding, so a Document that is already
+        stored costs nothing rather than being re-embedded and overwritten.
+        """
+        already = await self._store.stored_chunks(document.source)
+        if already and not replace:
+            return DocumentOutcome(
+                source=document.source, chunks=already, skipped=True
+            )
+
+        if already:
+            # The Document may have shrunk; clear it so no Chunk outlives it.
+            await self._store.forget(document.source)
+
+        vectors = await self._embedder.embed([chunk.text for chunk in document.chunks])
+        await self._store.store(document, vectors)
+        return DocumentOutcome(source=document.source, chunks=len(document.chunks))

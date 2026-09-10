@@ -19,11 +19,11 @@ from pinecone import AsyncIndex
 from app.config import settings
 from app.ingestion.embedding_model import OpenRouterEmbedder, embed
 from app.ingestion.ingestor import Ingestor
-from app.ingestion.vector_tools import VectorUpserter
 from app.models.schemas import IngestionRequest
 from app.services.graph_store import open_graph_store
 from app.services.llm import complete
-from app.services.vector_store import VectorStoreConfigError, open_vector_store
+from app.services.pinecone import open_vector_store
+from app.services.vector_store import PineconeVectorStore, VectorStoreConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ async def lifespan(server: MCPServer) -> AsyncIterator[ServerContext]:
             logger.warning("Neo4j is not configured; graph tools will error")
 
         ingestor = (
-            Ingestor(OpenRouterEmbedder(), VectorUpserter(index))
+            Ingestor(OpenRouterEmbedder(), PineconeVectorStore(index))
             if index is not None
             else None
         )
@@ -84,13 +84,21 @@ def _ingestor(ctx: Context) -> Ingestor:
 
 
 @mcp.tool()
-async def ingest_source(ctx: Context, source: str, payload: dict | None = None) -> str:
+async def ingest_source(
+    ctx: Context,
+    source: str,
+    payload: dict | None = None,
+    replace: bool = False,
+) -> str:
     """Convert, chunk, embed, and upsert a file, directory, or URL into the vector store.
 
+    Documents that are already stored are skipped rather than re-embedded; pass
+    replace=True when their content has actually changed.
+
     Blocks until the Ingestion finishes and returns a summary: counts per
-    document, plus any that failed.
+    document, plus any that were skipped or failed.
     """
-    request = IngestionRequest(source=source, payload=payload or {})
+    request = IngestionRequest(source=source, payload=payload or {}, replace=replace)
     job = await _ingestor(ctx).ingest(request)
     if job.result is None:
         return json.dumps({"state": job.state.value, "error": job.error})
@@ -118,8 +126,10 @@ async def ask_llm(prompt: str, model: str | None = None) -> str:
 async def search_notes(ctx: Context, query: str, top_k: int = 5, namespace: str = "") -> str:
     """Search previously ingested notes for chunks relevant to a query."""
     [vector] = await embed([query])
-    matches = await VectorUpserter(_index(ctx)).query(vector, top_k=top_k, namespace=namespace)
-    return json.dumps(matches, indent=2)
+    hits = await PineconeVectorStore(_index(ctx)).search(
+        vector, top_k=top_k, namespace=namespace
+    )
+    return json.dumps([hit.model_dump() for hit in hits], indent=2)
 
 
 if __name__ == "__main__":

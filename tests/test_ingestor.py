@@ -39,7 +39,7 @@ async def test_preview_returns_chunks_without_storing(store, embedder):
     assert [chunk.text for chunk in result.documents[0].chunks] == ["one", "two"]
     # The whole point of Preview: nothing embedded, nothing stored.
     assert embedder.batches == []
-    assert store.all_records == []
+    assert store.stored == {}
 
 
 async def test_preview_on_empty_source_reports_error_status():
@@ -51,7 +51,7 @@ async def test_preview_on_empty_source_reports_error_status():
 
 # -- ingest ---------------------------------------------------------------
 
-async def test_ingest_stores_one_record_per_chunk(store, embedder):
+async def test_ingest_stores_every_converted_document(store, embedder):
     ingestor = make(
         [document("/notes/a.pdf", "one", "two"), document("/notes/b.pdf", "three")],
         embedder,
@@ -64,48 +64,8 @@ async def test_ingest_stores_one_record_per_chunk(store, embedder):
     assert job.result.converted == 2
     assert job.result.stored == 2
     assert job.result.total_chunks == 3
-    assert len(store.all_records) == 3
-
-
-async def test_ingest_carries_chunk_text_and_headings_into_metadata(store):
-    ingestor = make([document("/notes/a.pdf", "hello")], store=store)
-
-    await ingestor.ingest(request())
-
-    metadata = store.all_records[0]["metadata"]
-    assert metadata["source"] == "/notes/a.pdf"
-    assert metadata["chunk_text"] == "hello"
-    assert metadata["headings"] == ["H"]
-
-
-async def test_records_are_namespaced_by_containing_folder(store):
-    ingestor = make(
-        [document("/notes/work/a.pdf", "x"), document("/notes/recipes/b.pdf", "y")],
-        store=store,
-    )
-
-    await ingestor.ingest(request())
-
-    assert set(store.by_namespace) == {"work", "recipes"}
-
-
-async def test_urls_fall_back_to_the_default_namespace(store):
-    ingestor = make([document("https://example.com/p.pdf", "x")], store=store)
-
-    await ingestor.ingest(request())
-
-    assert set(store.by_namespace) == {""}
-
-
-async def test_chunk_ids_are_stable_across_runs(store):
-    for _ in range(2):
-        await make([document("/notes/a.pdf", "one", "two")], store=store).ingest(
-            request()
-        )
-
-    ids = [record["id"] for record in store.all_records]
-    # Re-ingesting the same Source overwrites rather than accumulating.
-    assert ids[:2] == ids[2:]
+    assert store.sources == ["/notes/a.pdf", "/notes/b.pdf"]
+    assert store.total_chunks == 3
 
 
 async def test_document_with_no_chunks_is_counted_but_not_stored(store, embedder):
@@ -116,7 +76,51 @@ async def test_document_with_no_chunks_is_counted_but_not_stored(store, embedder
     assert job.result.converted == 1
     assert job.result.stored == 0
     assert job.result.failed == []
-    assert store.all_records == []
+    assert store.stored == {}
+
+
+# -- already stored -------------------------------------------------------
+
+async def test_already_stored_document_is_skipped_without_embedding(store, embedder):
+    docs = [document("/notes/a.pdf", "one", "two")]
+    await make(docs, embedder, store).ingest(request())
+    embedder.batches.clear()
+
+    job = await make(docs, embedder, store).ingest(request())
+
+    outcome = job.result.documents[0]
+    assert outcome.skipped is True
+    assert outcome.chunks == 2
+    assert job.result.skipped == 1
+    assert job.result.stored == 0
+    # The point of skipping: no second embedding bill.
+    assert embedder.batches == []
+    assert "1 already stored" in job.result.message
+
+
+async def test_replace_re_embeds_and_clears_the_old_chunks(store, embedder):
+    await make([document("/notes/a.pdf", "one", "two")], embedder, store).ingest(
+        request()
+    )
+    embedder.batches.clear()
+
+    shrunk = [document("/notes/a.pdf", "one")]
+    job = await make(shrunk, embedder, store).ingest(
+        IngestionRequest(source="/notes", replace=True)
+    )
+
+    assert job.result.skipped == 0
+    assert job.result.stored == 1
+    assert embedder.batches == [["one"]]
+    # forget() ran first, so nothing from the longer version survives.
+    assert store.forgotten == ["/notes/a.pdf"]
+    assert store.total_chunks == 1
+
+
+async def test_a_new_document_is_not_forgotten_first(store, embedder):
+    await make([document("/notes/a.pdf", "one")], embedder, store).ingest(request())
+
+    assert store.forgotten == []
 
 
 # -- partial failure ------------------------------------------------------

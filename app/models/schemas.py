@@ -6,6 +6,14 @@ from pydantic import BaseModel, Field
 class IngestionRequest(BaseModel):
     source: str = Field(..., description="Source system or provider")
     payload: dict = Field(default_factory=dict, description="Payload to ingest")
+    replace: bool = Field(
+        default=False,
+        description=(
+            "Re-embed documents that are already stored. Off by default so "
+            "re-running over a folder costs nothing; set it when the content "
+            "has actually changed."
+        ),
+    )
 
 
 class Chunk(BaseModel):
@@ -20,6 +28,14 @@ class ConvertedDocument(BaseModel):
     chunks: list[Chunk] = Field(
         default_factory=list, description="Retrieval-sized spans of this document"
     )
+
+
+class SearchHit(BaseModel):
+    """One Chunk found by a search, with how well it matched."""
+
+    score: float = Field(..., description="Similarity score from the vector store")
+    source: str = Field(..., description="Document this chunk came from")
+    chunk: Chunk
 
 
 class IngestionResponse(BaseModel):
@@ -38,7 +54,10 @@ class DocumentOutcome(BaseModel):
     """What happened to one Document during an Ingestion."""
 
     source: str = Field(..., description="Path or URL this document came from")
-    chunks: int = Field(0, description="Chunks embedded and stored")
+    chunks: int = Field(0, description="Chunks embedded and stored, or already stored")
+    skipped: bool = Field(
+        default=False, description="Already stored, so it was not re-embedded"
+    )
     error: str | None = Field(
         default=None, description="Why this document failed, if it did"
     )
@@ -58,6 +77,7 @@ class IngestionResult(BaseModel):
     source: str
     converted: int = Field(0, description="Documents converted from the source")
     stored: int = Field(0, description="Documents embedded and stored")
+    skipped: int = Field(0, description="Documents already stored, left untouched")
     total_chunks: int = Field(0, description="Chunks stored across all documents")
     documents: list[DocumentOutcome] = Field(default_factory=list)
     message: str = ""

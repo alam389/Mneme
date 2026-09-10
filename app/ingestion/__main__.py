@@ -15,7 +15,8 @@ from app.config import settings
 from app.ingestion.conversion import IngestionConfigError
 from app.ingestion.embedding_model import OpenRouterEmbedder
 from app.ingestion.ingestor import Ingestor
-from app.ingestion.vector_tools import VectorUpserter
+from app.services.pinecone import open_vector_store
+from app.services.vector_store import PineconeVectorStore
 from app.models.schemas import (
     IngestionRequest,
     IngestionResponse,
@@ -24,7 +25,7 @@ from app.models.schemas import (
     JobState,
 )
 from app.services.llm import LLMConfigError
-from app.services.vector_store import VectorStoreConfigError, open_vector_store
+from app.services.vector_store import VectorStoreConfigError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,6 +42,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--payload",
         default="{}",
         help="Payload as an inline JSON object",
+    )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="Re-embed documents that are already stored (off by default, so "
+        "re-running over a folder costs nothing)",
     )
     parser.add_argument(
         "--preview",
@@ -89,14 +96,17 @@ def render_result(result: IngestionResult) -> str:
     """One line per Document, failures last."""
     lines = [result.message, ""]
     for outcome in result.documents:
-        mark = "ok  " if outcome.ok else "FAIL"
+        mark = "FAIL" if not outcome.ok else "skip" if outcome.skipped else "ok  "
         detail = outcome.error if outcome.error else f"{outcome.chunks} chunks"
         lines.append(f"  {mark} {outcome.source} — {detail}")
     lines.append("")
-    lines.append(
+    summary = (
         f"stored {result.stored}/{result.converted} documents, "
         f"{result.total_chunks} chunks"
     )
+    if result.skipped:
+        summary += f" ({result.skipped} already stored)"
+    lines.append(summary)
     return "\n".join(lines)
 
 
@@ -116,7 +126,9 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError(
                 f"payload must be a JSON object, got {type(payload).__name__}"
             )
-        request = IngestionRequest(source=args.source, payload=payload)
+        request = IngestionRequest(
+            source=args.source, payload=payload, replace=args.replace
+        )
     except (json.JSONDecodeError, ValueError, ValidationError) as exc:
         return _fail(exc)
 
@@ -151,7 +163,7 @@ async def _preview(request: IngestionRequest) -> IngestionResponse:
 
 async def _ingest(request: IngestionRequest) -> Job:
     async with open_vector_store() as index:
-        ingestor = Ingestor(OpenRouterEmbedder(), VectorUpserter(index))
+        ingestor = Ingestor(OpenRouterEmbedder(), PineconeVectorStore(index))
         return await ingestor.ingest(request)
 
 

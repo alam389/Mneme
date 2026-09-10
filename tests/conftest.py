@@ -25,20 +25,38 @@ class FakeEmbedder:
 
 
 class FakeVectorStore:
-    """Records what would have been stored, per Namespace."""
+    """Holds stored Chunks per Source.
+
+    Deliberately knows nothing about ids, namespaces, or metadata -- those are
+    the Pinecone adapter's secret, and a test that asserted on them would be
+    testing past the seam.
+    """
 
     def __init__(self, fail: bool = False) -> None:
         self.fail = fail
-        self.by_namespace: dict[str, list[dict]] = {}
+        self.stored: dict[str, list[list[float]]] = {}
+        self.forgotten: list[str] = []
 
-    async def upsert(self, vectors: list[dict], namespace: str = "") -> None:
+    async def store(self, document, vectors: list[list[float]]) -> None:
         if self.fail:
             raise RuntimeError("vector store unavailable")
-        self.by_namespace.setdefault(namespace, []).extend(vectors)
+        self.stored[document.source] = list(vectors)
+
+    async def stored_chunks(self, source: str) -> int:
+        return len(self.stored.get(source, []))
+
+    async def forget(self, source: str) -> int:
+        count = len(self.stored.pop(source, []))
+        self.forgotten.append(source)
+        return count
 
     @property
-    def all_records(self) -> list[dict]:
-        return [rec for recs in self.by_namespace.values() for rec in recs]
+    def sources(self) -> list[str]:
+        return sorted(self.stored)
+
+    @property
+    def total_chunks(self) -> int:
+        return sum(len(v) for v in self.stored.values())
 
 
 class FakeConverter:

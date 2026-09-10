@@ -9,10 +9,11 @@ from app.api.routes import router
 from app.config import settings
 from app.ingestion.embedding_model import OpenRouterEmbedder
 from app.ingestion.ingestor import Ingestor
-from app.ingestion.vector_tools import VectorUpserter
+from app.services.pinecone import open_vector_store
+from app.services.vector_store import PineconeVectorStore
 from app.services.graph_store import GraphStoreConfigError, open_graph_store
 from app.services.llm import LLMConfigError
-from app.services.vector_store import VectorStoreConfigError, open_vector_store
+from app.services.vector_store import VectorStoreConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if settings.pinecone_api_key and settings.pinecone_host:
             app.state.vector_index = await stack.enter_async_context(open_vector_store())
             app.state.ingestor = Ingestor(
-                OpenRouterEmbedder(), VectorUpserter(app.state.vector_index)
+                OpenRouterEmbedder(), PineconeVectorStore(app.state.vector_index)
             )
         else:
             # Let the rest of the API boot; get_vector_index() reports the cause.

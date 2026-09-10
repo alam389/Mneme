@@ -71,7 +71,7 @@ def test_preview_returns_chunks_and_stores_nothing(client, ingestor):
     assert response.status_code == 200
     body = response.json()
     assert [c["text"] for c in body["documents"][0]["chunks"]] == ["one", "two"]
-    assert ingestor._store.all_records == []
+    assert ingestor._store.stored == {}
 
 
 def test_unreadable_source_is_a_400_not_a_500(client, documents):

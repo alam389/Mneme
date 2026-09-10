@@ -34,7 +34,7 @@ source (file / folder / URL)
   embedding_model.py BAAI/bge-m3 via OpenRouter
         │
         ▼
-  vector_tools.py    Pinecone upsert, namespaced by containing folder
+  vector_store.py    ids, namespaces, metadata, upsert
 ```
 
 `Ingestor` (`ingestor.py`) coordinates those steps and is the only public way
@@ -56,6 +56,12 @@ Three seams sit under it, each with a production adapter and a test adapter:
 `Embedder`, `VectorStore`, and `JobStore`. That is what makes the pipeline
 testable without a live network.
 
+Documents that are already stored are **skipped** rather than re-embedded —
+checked before embedding, so re-running over a folder costs one listing instead
+of an embedding bill. Pass `replace` when a document's content has actually
+changed: its old chunks are forgotten first, so a document that shrank leaves
+nothing stale behind.
+
 ### Layering
 
 ```
@@ -72,12 +78,12 @@ app/
 │   ├── conversion.py        source resolution + Docling conversion (internal)
 │   ├── chunking.py          heading-aware chunking (internal)
 │   ├── embedding_model.py   OpenRouter adapter for the Embedder seam
-│   ├── vector_tools.py      Pinecone upsert / fetch / query
 │   ├── graph_tools.py       Neo4j entity + relationship upserts
 │   └── __main__.py          CLI entrypoint (argument parsing and I/O only)
 └── services/                external-provider clients
     ├── llm.py               OpenRouter (AsyncOpenAI)
-    ├── vector_store.py      Pinecone
+    ├── pinecone.py          Pinecone connection lifecycle
+    ├── vector_store.py      the vector record: ids, namespaces, metadata
     └── graph_store.py       Neo4j
 ```
 
@@ -170,7 +176,8 @@ curl -X POST http://127.0.0.1:8000/api/preview \
   -H "Content-Type: application/json" \
   -d '{"source": "/path/to/notes"}'
 
-# Start an ingestion, then collect the result.
+# Start an ingestion, then collect the result. Already-stored documents are
+# skipped; add "replace": true to re-embed them.
 curl -X POST http://127.0.0.1:8000/api/ingest \
   -H "Content-Type: application/json" \
   -d '{"source": "/path/to/notes"}'
@@ -195,6 +202,9 @@ Handy for iterating on the pipeline without booting uvicorn:
 ```bash
 python -m app.ingestion --source /path/to/notes
 python -m app.ingestion --source https://example.com/paper.pdf
+
+# Re-embed documents that are already stored (default is to skip them).
+python -m app.ingestion --replace --source /path/to/notes
 
 # Preview: convert and chunk only. No embedding, no storage, no Pinecone needed.
 python -m app.ingestion --preview --format text --limit 3 --source ~/docs
@@ -227,7 +237,7 @@ Three tools are exposed, calling straight into the same services:
 
 | Tool | Does |
 | --- | --- |
-| `ingest_source` | convert, chunk, embed, and upsert a file, folder, or URL; blocks and returns a summary |
+| `ingest_source` | convert, chunk, embed, and store a file, folder, or URL; skips what is already stored unless `replace=True` |
 | `preview_source` | convert and chunk without embedding or storing |
 | `ask_llm` | send a prompt to the configured OpenRouter model |
 | `search_notes` | embed a query and return the most relevant ingested chunks |
@@ -259,9 +269,10 @@ Planned work:
   remains.
 - **Idempotency and replay protection** — dedupe on the provider's event id and
   reject stale timestamps, so a provider's retry does not double-ingest.
-- **Incremental re-ingest** — delete the document's existing vectors by its id
-  prefix before upserting the new ones, so an edited document does not
-  accumulate stale chunks.
+- ~~**Incremental re-ingest**~~ — done: `forget(source)` deletes a document's
+  vectors by id prefix, and an ingestion with `replace` calls it before storing,
+  so an edited document accumulates no stale chunks. A receiver just sets
+  `replace` on the request.
 
 ### Webhooks — outbound
 
@@ -323,11 +334,8 @@ Worth knowing before you build on this:
   `Ingestor`.
 - **`GraphUpserter` is unwired.** No ingestion stage, route, or MCP tool calls
   it, so no entities are ever written.
-- **Retrieval has no module.** `search_notes` does embed → query → format inline
-  in the MCP tool; a future `/api/search` would duplicate it.
-- **`VectorUpserter` is a thin pass-through to Pinecone**, and the vector record
-  shape (id derivation, namespacing, metadata) still lives in `Ingestor` rather
-  than behind the vector-store interface.
+- **Retrieval has no module.** `search_notes` calls the vector store's `search`
+  directly from the MCP tool; a future `/api/search` would duplicate that call.
 - **No linter or formatter** is configured. Tests exist now (`pytest`), but only
   cover ingestion and the routes.
 
