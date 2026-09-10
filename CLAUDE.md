@@ -10,6 +10,9 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload       # http://127.0.0.1:8000 — docs at /docs
 
 python -m app.ingestion --source demo --payload '{"id": 1}'   # run ingestion without the server
+
+python -m app.mcp_server            # stdio MCP server exposing ingest/prompt/search as tools
+claude mcp add mneme -- $(pwd)/.venv/bin/python -m app.mcp_server   # register it with Claude Code
 ```
 
 There is no test suite, linter, or formatter configured yet. `requirements.txt` is the only dependency manifest (no lock file, no pyproject).
@@ -32,6 +35,8 @@ FastAPI ingestion scaffold. Layering is `app/api/routes.py` → `app/ingestion/`
 **Ingestion package** — `app/ingestion/` has two entrypoints onto one `IngestionService` (`conversion.py`): the `/api/ingest` route, which instantiates it once at module scope in `routes.py`, and `__main__.py`, a CLI run as `python -m app.ingestion` that takes a payload from `--payload`, `--file`, or stdin and prints the response as JSON (exit 2 on bad input). Keep new pipeline logic in `app/ingestion/` so both entrypoints stay in sync — `__main__.py` should only ever do argument parsing and I/O.
 
 `IngestionService` is still a stub — it counts payloads and echoes them back; there is no real pipeline yet, and it does not touch Pinecone or OpenRouter.
+
+**MCP server** — `app/mcp_server.py` is a third entrypoint (alongside the API route and the ingestion CLI), built on the `mcp` package's `MCPServer` (note: this is the `mcp>=2.0` API — `FastMCP` was renamed `MCPServer` in `mcp.server.mcpserver`, so v1-era examples won't import as-is). It holds one Pinecone connection for the process lifetime via the same `lifespan`/`open_vector_store` pattern as `app.main`, and exposes three tools by calling straight into the existing services: `ingest_source` (`IngestionPipeline`), `ask_llm` (`app.services.llm.complete`), and `search_notes` (embeds the query, then `VectorUpserter.query`, added alongside the existing `upsert`/`fetch_records_ids` in `app/ingestion/vector_tools.py`). Run it with `python -m app.mcp_server` (stdio transport).
 
 ## Postman
 
