@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     model_name: str = "openai/gpt-4o-mini"
+    embedding_model_name: str = "baai/bge-m3"
     ingestion_timeout_seconds: int = 30
     ingestion_doc_source: str = "/Users/anthonylam"
     default_source: str = ""

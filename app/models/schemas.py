@@ -1,3 +1,5 @@
+from enum import Enum
+
 from pydantic import BaseModel, Field
 
 
@@ -21,12 +23,76 @@ class ConvertedDocument(BaseModel):
 
 
 class IngestionResponse(BaseModel):
+    """Result of a Preview: converted Documents with their Chunks, nothing stored."""
+
     status: str
     source: str
     received_items: int
     message: str
     documents: list[ConvertedDocument] = Field(
         default_factory=list, description="One entry per converted document"
+    )
+
+
+class DocumentOutcome(BaseModel):
+    """What happened to one Document during an Ingestion."""
+
+    source: str = Field(..., description="Path or URL this document came from")
+    chunks: int = Field(0, description="Chunks embedded and stored")
+    error: str | None = Field(
+        default=None, description="Why this document failed, if it did"
+    )
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+
+class IngestionResult(BaseModel):
+    """Summary of a finished Ingestion.
+
+    Carries counts and failures, not Chunk bodies: once a Chunk is stored the
+    VectorStore owns it, so retrieval is where you read it back.
+    """
+
+    source: str
+    converted: int = Field(0, description="Documents converted from the source")
+    stored: int = Field(0, description="Documents embedded and stored")
+    total_chunks: int = Field(0, description="Chunks stored across all documents")
+    documents: list[DocumentOutcome] = Field(default_factory=list)
+    message: str = ""
+
+    @property
+    def failed(self) -> list[DocumentOutcome]:
+        return [doc for doc in self.documents if not doc.ok]
+
+
+class JobSubmission(BaseModel):
+    """Handed back when an Ingestion is submitted."""
+
+    job_id: str = Field(..., description="Poll /jobs/{job_id} for the result")
+
+
+class JobState(str, Enum):
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class Job(BaseModel):
+    """One submitted Ingestion, resolvable to a summary once finished.
+
+    A Job succeeds when the Ingestion ran, even if individual Documents failed --
+    those are reported in ``result.documents``. It fails only when the Ingestion
+    itself could not run.
+    """
+
+    id: str
+    source: str
+    state: JobState = JobState.RUNNING
+    result: IngestionResult | None = None
+    error: str | None = Field(
+        default=None, description="Why the ingestion could not run, if it could not"
     )
 
 

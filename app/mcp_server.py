@@ -17,9 +17,8 @@ from neo4j import AsyncDriver
 from pinecone import AsyncIndex
 
 from app.config import settings
-from app.ingestion.conversion import IngestionService
-from app.ingestion.embedding_model import embed
-from app.ingestion.pipeline import IngestionPipeline
+from app.ingestion.embedding_model import OpenRouterEmbedder, embed
+from app.ingestion.ingestor import Ingestor
 from app.ingestion.vector_tools import VectorUpserter
 from app.models.schemas import IngestionRequest
 from app.services.graph_store import open_graph_store
@@ -33,6 +32,8 @@ logger = logging.getLogger(__name__)
 class ServerContext:
     index: AsyncIndex | None
     graph_driver: AsyncDriver | None
+    # One Ingestor for the process, so its Job store outlives a single tool call.
+    ingestor: Ingestor | None
 
 
 @asynccontextmanager
@@ -50,7 +51,15 @@ async def lifespan(server: MCPServer) -> AsyncIterator[ServerContext]:
         else:
             logger.warning("Neo4j is not configured; graph tools will error")
 
-        yield ServerContext(index=index, graph_driver=graph_driver)
+        ingestor = (
+            Ingestor(OpenRouterEmbedder(), VectorUpserter(index))
+            if index is not None
+            else None
+        )
+
+        yield ServerContext(
+            index=index, graph_driver=graph_driver, ingestor=ingestor
+        )
 
 
 mcp = MCPServer("mneme", lifespan=lifespan)
@@ -65,12 +74,37 @@ def _index(ctx: Context) -> AsyncIndex:
     return index
 
 
+def _ingestor(ctx: Context) -> Ingestor:
+    ingestor = ctx.request_context.lifespan_context.ingestor
+    if ingestor is None:
+        raise VectorStoreConfigError(
+            "Ingestion is unavailable; check PINECONE_API_KEY and PINECONE_HOST"
+        )
+    return ingestor
+
+
 @mcp.tool()
 async def ingest_source(ctx: Context, source: str, payload: dict | None = None) -> str:
-    """Convert, chunk, embed, and upsert a file, directory, or URL into the vector store."""
+    """Convert, chunk, embed, and upsert a file, directory, or URL into the vector store.
+
+    Blocks until the Ingestion finishes and returns a summary: counts per
+    document, plus any that failed.
+    """
     request = IngestionRequest(source=source, payload=payload or {})
-    pipeline = IngestionPipeline(IngestionService(), _index(ctx))
-    response = await pipeline.run(request)
+    job = await _ingestor(ctx).ingest(request)
+    if job.result is None:
+        return json.dumps({"state": job.state.value, "error": job.error})
+    return job.result.model_dump_json()
+
+
+@mcp.tool()
+async def preview_source(ctx: Context, source: str) -> str:
+    """Convert and chunk a file, directory, or URL without embedding or storing it.
+
+    Use this to check how a document will be split before paying to embed it.
+    """
+    request = IngestionRequest(source=source, payload={})
+    response = await _ingestor(ctx).preview(request)
     return response.model_dump_json()
 
 

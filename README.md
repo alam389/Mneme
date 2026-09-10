@@ -12,9 +12,10 @@ entrypoint, and an MCP server that plugs straight into Claude Code and other
 MCP clients.
 
 > **Status: early scaffold.** The conversion → chunking → embedding → vector
-> storage path works end to end. The knowledge graph is wired for connections
-> but not yet populated, and webhooks are not built. See
-> [Roadmap](#roadmap) and [Known gaps](#known-gaps).
+> storage path works end to end behind one `Ingestor` interface, covered by
+> tests. The knowledge graph is wired for connections but not yet populated,
+> and webhooks are not built. See [Roadmap](#roadmap) and
+> [Known gaps](#known-gaps).
 
 ---
 
@@ -36,9 +37,24 @@ source (file / folder / URL)
   vector_tools.py    Pinecone upsert, namespaced by containing folder
 ```
 
-`pipeline.py` coordinates those steps for a single ingestion request. Documents
-are embedded and upserted concurrently, and one unreadable file does not abort
-the batch.
+`Ingestor` (`ingestor.py`) coordinates those steps and is the only public way
+in — the API, the CLI, and the MCP server all cross the same interface.
+Documents are embedded and upserted concurrently, and one unreadable file does
+not abort the batch.
+
+Two ways in:
+
+- **`preview(request)`** converts and chunks without embedding or storing.
+  Synchronous, cheap, and needs no Pinecone credentials — this is how you
+  inspect chunking quality.
+- **`submit(request)`** starts an ingestion and returns a **job id**. Converting
+  a folder runs for minutes, longer than an HTTP caller or a webhook provider
+  will wait, so the work continues after the response. `ingest(request)` is
+  `submit` followed by a wait, for callers that can afford to block.
+
+Three seams sit under it, each with a production adapter and a test adapter:
+`Embedder`, `VectorStore`, and `JobStore`. That is what makes the pipeline
+testable without a live network.
 
 ### Layering
 
@@ -50,10 +66,12 @@ app/
 ├── api/routes.py            HTTP routes
 ├── models/schemas.py        every request/response Pydantic model
 ├── ingestion/               the pipeline itself
-│   ├── conversion.py        source resolution + Docling conversion
-│   ├── chunking.py          heading-aware chunking
-│   ├── embedding_model.py   embeddings via OpenRouter
-│   ├── pipeline.py          orchestrates convert → embed → upsert
+│   ├── ingestor.py          Ingestor — the one public way in
+│   ├── ports.py             Embedder and VectorStore seams
+│   ├── jobs.py              JobStore seam + in-memory adapter
+│   ├── conversion.py        source resolution + Docling conversion (internal)
+│   ├── chunking.py          heading-aware chunking (internal)
+│   ├── embedding_model.py   OpenRouter adapter for the Embedder seam
 │   ├── vector_tools.py      Pinecone upsert / fetch / query
 │   ├── graph_tools.py       Neo4j entity + relationship upserts
 │   └── __main__.py          CLI entrypoint (argument parsing and I/O only)
@@ -63,8 +81,13 @@ app/
     └── graph_store.py       Neo4j
 ```
 
-Rule of thumb: pipeline logic lives in `app/ingestion/` so all three entrypoints
-stay in sync. `__main__.py` only parses arguments and prints output.
+Rule of thumb: everything goes through `Ingestor`, so the entrypoints cannot
+drift. `app/ingestion/__init__.py` exports only `Ingestor` — conversion and
+chunking are implementation, not a second way in. `__main__.py` only parses
+arguments and prints output.
+
+Domain vocabulary — **Source**, **Document**, **Chunk**, **Preview**,
+**Ingestion Job** — is defined in [CONTEXT.md](CONTEXT.md).
 
 ### Providers
 
@@ -131,18 +154,39 @@ uvicorn app.main:app --reload
 - Swagger UI: http://127.0.0.1:8000/docs
 - ReDoc: http://127.0.0.1:8000/redoc
 
-Routes are mounted under `API_PREFIX` (default `/api`), so the real paths are
-`/api/health`, `/api/ingest`, and `/api/prompt`. Only `/` is unprefixed.
+Routes are mounted under `API_PREFIX` (default `/api`). Only `/` is unprefixed.
+
+| Route | Does |
+| --- | --- |
+| `GET /api/health` | liveness; needs no providers |
+| `POST /api/preview` | convert and chunk, store nothing — returns 200 with the chunks |
+| `POST /api/ingest` | start an ingestion — returns 202 with a job id |
+| `GET /api/jobs/{id}` | the job's state, and its summary once finished |
+| `POST /api/prompt` | send a prompt to the configured model |
 
 ```bash
+# See how a source would be chunked, without paying to embed it.
+curl -X POST http://127.0.0.1:8000/api/preview \
+  -H "Content-Type: application/json" \
+  -d '{"source": "/path/to/notes"}'
+
+# Start an ingestion, then collect the result.
 curl -X POST http://127.0.0.1:8000/api/ingest \
   -H "Content-Type: application/json" \
-  -d '{"source": "/path/to/notes", "payload": {}}'
+  -d '{"source": "/path/to/notes"}'
+# => 202 {"job_id": "5f2c..."}
+
+curl http://127.0.0.1:8000/api/jobs/5f2c...
+# => {"state": "succeeded", "result": {"stored": 38, "total_chunks": 812, ...}}
 
 curl -X POST http://127.0.0.1:8000/api/prompt \
   -H "Content-Type: application/json" \
   -d '{"prompt": "Summarise what you know about project Mneme."}'
 ```
+
+A job's summary carries counts and per-document failures, not chunk bodies —
+once a chunk is stored the vector store owns it. Jobs live in memory, so they do
+not survive a restart and are not visible to the MCP server process.
 
 ### Run ingestion without the server
 
@@ -151,12 +195,26 @@ Handy for iterating on the pipeline without booting uvicorn:
 ```bash
 python -m app.ingestion --source /path/to/notes
 python -m app.ingestion --source https://example.com/paper.pdf
-python -m app.ingestion --source ~/docs --format text --limit 3
+
+# Preview: convert and chunk only. No embedding, no storage, no Pinecone needed.
+python -m app.ingestion --preview --format text --limit 3 --source ~/docs
 ```
 
-`--format text` prints a readable per-chunk listing with heading trails, which is
-the fastest way to eyeball chunking quality. Exit code `2` means bad input or a
-missing provider credential.
+`--preview --format text` prints a per-chunk listing with heading trails, which
+is the fastest way to eyeball chunking quality — and it costs nothing, since
+nothing is embedded. Without `--preview` the CLI runs a full ingestion and
+blocks until the job finishes. Exit code `2` means bad input, a missing provider
+credential, or a failed job.
+
+### Run the tests
+
+```bash
+pytest
+```
+
+Tests cross the same interface the entrypoints do. `Embedder`, `VectorStore`,
+and `JobStore` each have a fake adapter in `tests/conftest.py`, so the suite
+needs no network and no credentials.
 
 ### Run the MCP server
 
@@ -169,7 +227,8 @@ Three tools are exposed, calling straight into the same services:
 
 | Tool | Does |
 | --- | --- |
-| `ingest_source` | convert, chunk, embed, and upsert a file, folder, or URL |
+| `ingest_source` | convert, chunk, embed, and upsert a file, folder, or URL; blocks and returns a summary |
+| `preview_source` | convert and chunk without embedding or storing |
 | `ask_llm` | send a prompt to the configured OpenRouter model |
 | `search_notes` | embed a query and return the most relevant ingested chunks |
 
@@ -194,9 +253,10 @@ Planned work:
 - **Signature verification** — HMAC verification per provider before the payload
   is trusted, with the shared secret held in `Settings` like every other
   credential. Reject unverified requests with a 401.
-- **Fast ack, async work** — respond 202 immediately and hand the job to a
-  background queue; providers time out and retry aggressively, and conversion
-  plus embedding is far too slow to do inline.
+- ~~**Fast ack, async work**~~ — done: `/api/ingest` already responds 202 with a
+  job id, so a webhook receiver only needs to call `submit` and hand back the
+  same shape. Swapping the in-memory `JobStore` for a durable adapter is what
+  remains.
 - **Idempotency and replay protection** — dedupe on the provider's event id and
   reject stale timestamps, so a provider's retry does not double-ingest.
 - **Incremental re-ingest** — delete the document's existing vectors by its id
@@ -233,14 +293,16 @@ is interpolated into a query. Keep that guard on any new Cypher.
 
 ### Retrieval and querying
 
-- A `/api/search` route mirroring the MCP `search_notes` tool.
+- A Retrieval module, then a `/api/search` route and the MCP `search_notes`
+  tool both calling it.
 - A real RAG endpoint: retrieve, assemble context, answer with citations back to
   the source document and heading trail.
 - Reranking, and hybrid dense + keyword search.
 
 ### Operational
 
-- A test suite — there is none today, which is the biggest gap.
+- Broaden the test suite: conversion, chunking, and the MCP tools are still
+  uncovered.
 - Linting and formatting (ruff), and a `pyproject.toml` with a lock file to
   replace the bare `requirements.txt`.
 - Structured logging and per-stage ingestion metrics.
@@ -255,21 +317,19 @@ is interpolated into a query. Keep that guard on any new Cypher.
 
 Worth knowing before you build on this:
 
-- **`/api/ingest` does not embed or upsert.** The route calls `IngestionService`
-  directly rather than `IngestionPipeline`, so the HTTP path converts and chunks
-  but never reaches Pinecone. The CLI and the MCP server both use the full
-  pipeline. See `app/api/routes.py`.
-- **`IngestionService.process` returns a tuple**, not the `IngestionResponse` its
-  annotation claims — `pipeline.py` unpacks it as `(documents, message)`, but the
-  route returns it straight to FastAPI. These two need reconciling.
+- **Jobs are in-memory.** They die on restart and are invisible across
+  processes, so a job id from the API cannot be resolved by the MCP server. The
+  `JobStore` seam exists so a durable adapter can replace it without touching
+  `Ingestor`.
 - **`GraphUpserter` is unwired.** No ingestion stage, route, or MCP tool calls
   it, so no entities are ever written.
-- **`EMBEDDING_MODEL_NAME` in `.env` is inert** — no matching field on `Settings`.
-  The embedding model is hardcoded as `baai/bge-m3` in
-  `app/ingestion/embedding_model.py`.
-- **No tests, linter, or formatter** are configured.
-
----
+- **Retrieval has no module.** `search_notes` does embed → query → format inline
+  in the MCP tool; a future `/api/search` would duplicate it.
+- **`VectorUpserter` is a thin pass-through to Pinecone**, and the vector record
+  shape (id derivation, namespacing, metadata) still lives in `Ingestor` rather
+  than behind the vector-store interface.
+- **No linter or formatter** is configured. Tests exist now (`pytest`), but only
+  cover ingestion and the routes.
 
 ## License
 
