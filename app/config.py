@@ -12,7 +12,14 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     model_name: str = "openai/gpt-4o-mini"
+
+    # Embeddings have their own client so they can point at a different
+    # provider than chat. Blank falls back to the OpenRouter values above.
     embedding_model_name: str = "baai/bge-m3"
+    embedding_api_key: str = ""
+    embedding_base_url: str = ""
+    embedding_timeout_seconds: int = 60
+    embedding_batch_size: int = 96
     ingestion_timeout_seconds: int = 30
     ingestion_doc_source: str = "/Users/anthonylam"
     default_source: str = ""

@@ -17,8 +17,9 @@ from neo4j import AsyncDriver
 from pinecone import AsyncIndex
 
 from app.config import settings
-from app.ingestion.embedding_model import OpenRouterEmbedder, embed
+from app.services.embedder import OpenRouterEmbedder
 from app.ingestion.ingestor import Ingestor
+from app.ports import Embedder
 from app.models.schemas import IngestionRequest
 from app.services.graph_store import open_graph_store
 from app.services.llm import complete
@@ -34,6 +35,8 @@ class ServerContext:
     graph_driver: AsyncDriver | None
     # One Ingestor for the process, so its Job store outlives a single tool call.
     ingestor: Ingestor | None
+    # Held rather than built per call, so search crosses the Embedder seam too.
+    embedder: Embedder
 
 
 @asynccontextmanager
@@ -51,14 +54,18 @@ async def lifespan(server: MCPServer) -> AsyncIterator[ServerContext]:
         else:
             logger.warning("Neo4j is not configured; graph tools will error")
 
+        embedder = OpenRouterEmbedder()
         ingestor = (
-            Ingestor(OpenRouterEmbedder(), PineconeVectorStore(index))
+            Ingestor(embedder, PineconeVectorStore(index))
             if index is not None
             else None
         )
 
         yield ServerContext(
-            index=index, graph_driver=graph_driver, ingestor=ingestor
+            index=index,
+            graph_driver=graph_driver,
+            ingestor=ingestor,
+            embedder=embedder,
         )
 
 
@@ -125,7 +132,8 @@ async def ask_llm(prompt: str, model: str | None = None) -> str:
 @mcp.tool()
 async def search_notes(ctx: Context, query: str, top_k: int = 5, namespace: str = "") -> str:
     """Search previously ingested notes for chunks relevant to a query."""
-    [vector] = await embed([query])
+    embedder = ctx.request_context.lifespan_context.embedder
+    [vector] = await embedder.embed([query])
     hits = await PineconeVectorStore(_index(ctx)).search(
         vector, top_k=top_k, namespace=namespace
     )

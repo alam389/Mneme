@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.routes import router
 from app.config import settings
-from app.ingestion.embedding_model import OpenRouterEmbedder
+from app.services.embedder import EmbedderConfigError, OpenRouterEmbedder
 from app.ingestion.ingestor import Ingestor
 from app.services.pinecone import open_vector_store
 from app.services.vector_store import PineconeVectorStore
@@ -62,6 +62,7 @@ app.include_router(router, prefix=settings.api_prefix)
 # Unconfigured providers are a deployment problem, not a bad request: every
 # service raises its own config error at use time and they all mean 503.
 @app.exception_handler(LLMConfigError)
+@app.exception_handler(EmbedderConfigError)
 @app.exception_handler(VectorStoreConfigError)
 @app.exception_handler(GraphStoreConfigError)
 async def handle_config_error(request: Request, exc: Exception) -> JSONResponse:

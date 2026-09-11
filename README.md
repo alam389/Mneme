@@ -31,7 +31,7 @@ source (file / folder / URL)
   chunking.py        HybridChunker → chunks carrying their heading trail
         │
         ▼
-  embedding_model.py BAAI/bge-m3 via OpenRouter
+  services/embedder  BAAI/bge-m3 via OpenRouter, batched
         │
         ▼
   vector_store.py    ids, namespaces, metadata, upsert
@@ -53,8 +53,9 @@ Two ways in:
   `submit` followed by a wait, for callers that can afford to block.
 
 Three seams sit under it, each with a production adapter and a test adapter:
-`Embedder`, `VectorStore`, and `JobStore`. That is what makes the pipeline
-testable without a live network.
+`Embedder` and `VectorStore` (in `app/ports.py`) and `JobStore` (in
+`app/ingestion/jobs.py`). That is what makes the pipeline testable without a
+live network.
 
 Documents that are already stored are **skipped** rather than re-embedded —
 checked before embedding, so re-running over a folder costs one listing instead
@@ -69,19 +70,19 @@ app/
 ├── main.py                  FastAPI app + lifespan (owns provider connections)
 ├── mcp_server.py            MCP server entrypoint (stdio transport)
 ├── config.py                Settings singleton, loaded from .env
+├── ports.py                 the app's seams: Embedder, VectorStore
 ├── api/routes.py            HTTP routes
 ├── models/schemas.py        every request/response Pydantic model
 ├── ingestion/               the pipeline itself
 │   ├── ingestor.py          Ingestor — the one public way in
-│   ├── ports.py             Embedder and VectorStore seams
 │   ├── jobs.py              JobStore seam + in-memory adapter
 │   ├── conversion.py        source resolution + Docling conversion (internal)
 │   ├── chunking.py          heading-aware chunking (internal)
-│   ├── embedding_model.py   OpenRouter adapter for the Embedder seam
 │   ├── graph_tools.py       Neo4j entity + relationship upserts
 │   └── __main__.py          CLI entrypoint (argument parsing and I/O only)
 └── services/                external-provider clients
-    ├── llm.py               OpenRouter (AsyncOpenAI)
+    ├── llm.py               OpenRouter chat (AsyncOpenAI)
+    ├── embedder.py          OpenRouter embeddings, own client + batching
     ├── pinecone.py          Pinecone connection lifecycle
     ├── vector_store.py      the vector record: ids, namespaces, metadata
     └── graph_store.py       Neo4j
@@ -141,6 +142,13 @@ NEO4J_URI=bolt://localhost:7687
 NEO4J_USERNAME=neo4j
 NEO4J_PASSWORD=...
 NEO4J_DATABASE=neo4j
+
+# Embeddings — their own client; blank falls back to the OpenRouter values
+EMBEDDING_MODEL_NAME=baai/bge-m3
+EMBEDDING_API_KEY=
+EMBEDDING_BASE_URL=
+EMBEDDING_TIMEOUT_SECONDS=60
+EMBEDDING_BATCH_SIZE=96
 
 # Convenience
 DEFAULT_SOURCE=/path/to/your/notes

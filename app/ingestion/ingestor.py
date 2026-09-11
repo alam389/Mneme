@@ -19,7 +19,7 @@ from functools import lru_cache
 
 from app.ingestion.conversion import IngestionService
 from app.ingestion.jobs import InMemoryJobStore, JobStore
-from app.ingestion.ports import Embedder, VectorStore
+from app.ports import Embedder, VectorStore
 from app.models.schemas import (
     ConvertedDocument,
     DocumentOutcome,
@@ -28,6 +28,7 @@ from app.models.schemas import (
     IngestionResult,
     Job,
 )
+from app.services.embedder import EmbedderConfigError
 from app.services.llm import LLMConfigError
 from app.services.vector_store import VectorStoreConfigError
 
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 # Config errors mean the process is misconfigured, not that one Document is
 # bad, so they fail the whole Job instead of being recorded per Document.
-FATAL_ERRORS = (LLMConfigError, VectorStoreConfigError)
+FATAL_ERRORS = (LLMConfigError, EmbedderConfigError, VectorStoreConfigError)
 
 
 @lru_cache

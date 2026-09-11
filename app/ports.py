@@ -1,7 +1,12 @@
-"""Seams the Ingestor depends on.
+"""The application's seams.
 
-Each has two adapters -- production and test -- which is what makes them worth
-declaring. Anything with only one adapter stays a concrete call.
+Each has two adapters -- production and test -- which is what makes it worth
+declaring; anything with only one adapter stays a concrete call. They live here
+rather than under ``app/ingestion`` because ingestion is not the only crosser:
+retrieval embeds a query and reads the vector store through the same two.
+
+Production adapters are in ``app/services``; the test adapters are in
+``tests/conftest.py``.
 """
 
 from typing import Protocol, runtime_checkable

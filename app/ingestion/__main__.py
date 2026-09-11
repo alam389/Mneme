@@ -13,7 +13,7 @@ from pydantic import ValidationError
 
 from app.config import settings
 from app.ingestion.conversion import IngestionConfigError
-from app.ingestion.embedding_model import OpenRouterEmbedder
+from app.services.embedder import EmbedderConfigError, OpenRouterEmbedder
 from app.ingestion.ingestor import Ingestor
 from app.services.pinecone import open_vector_store
 from app.services.vector_store import PineconeVectorStore
@@ -143,7 +143,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         job = asyncio.run(_ingest(request))
-    except (VectorStoreConfigError, LLMConfigError, IngestionConfigError) as exc:
+    except (
+        VectorStoreConfigError,
+        EmbedderConfigError,
+        LLMConfigError,
+        IngestionConfigError,
+    ) as exc:
         return _fail(exc)
 
     if job.state is JobState.FAILED:

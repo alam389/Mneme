@@ -61,8 +61,10 @@ _Avoid_: ticket, token, handle
 ### Seams
 
 **Embedder**:
-The seam that turns text into vectors. Two adapters: OpenRouter in production, a
-deterministic one in tests.
+The seam that turns text into vectors, crossed by both Ingestion and retrieval.
+Two adapters: OpenRouter in production, a deterministic one in tests. Batching
+is its own business -- callers hand it any number of texts and get one vector
+each, in order.
 _Avoid_: embedding model, encoder, vectorizer
 
 **VectorStore**:
