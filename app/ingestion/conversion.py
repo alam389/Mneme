@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from docling.datamodel.base_models import FormatToExtensions, InputFormat
@@ -10,6 +11,8 @@ from docling.document_converter import (
 
 from app.ingestion.chunking import DocumentChunker
 from app.models.schemas import ConvertedDocument, IngestionRequest
+
+logger = logging.getLogger(__name__)
 
 ALLOWED_FORMATS = [
     InputFormat.PDF,
@@ -75,16 +78,26 @@ class IngestionService:
 
     def process(self, payload: IngestionRequest) -> tuple[list[ConvertedDocument], str]:
         sources = self.resolve(payload.source)
+        logger.info("resolved %d document(s) from %s", len(sources), payload.source)
 
         # raises_on_error=False so one unreadable file does not abort the batch.
-        documents = [
-            ConvertedDocument(
-                source=str(result.input.file),
-                chunks=self._chunker.chunk(result.document),
+        # convert_all yields as each file finishes, so log per file: this is
+        # the slow phase, and silence here looks like a hang.
+        documents: list[ConvertedDocument] = []
+        for i, result in enumerate(
+            self._converter.convert_all(sources, raises_on_error=False), start=1
+        ):
+            name = str(result.input.file)
+            if result.document is None:
+                logger.warning("[%d/%d] failed to convert %s", i, len(sources), name)
+                continue
+            document = ConvertedDocument(
+                source=name, chunks=self._chunker.chunk(result.document)
             )
-            for result in self._converter.convert_all(sources, raises_on_error=False)
-            if result.document is not None
-        ]
+            documents.append(document)
+            logger.info(
+                "[%d/%d] converted %s -> %d chunks", i, len(sources), name, len(document.chunks)
+            )
 
         failed = len(sources) - len(documents)
         total_chunks = sum(len(doc.chunks) for doc in documents)

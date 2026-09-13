@@ -18,6 +18,8 @@ python -m app.mcp_server            # stdio MCP server exposing ingest/prompt/se
 claude mcp add mneme -- $(pwd)/.venv/bin/python -m app.mcp_server   # register it with Claude Code
 ```
 
+`configure_logging()` in `app/config.py` is called once by each entrypoint; `app.*` loggers get `LOG_LEVEL` (default INFO), everything else stays at WARNING, and output goes to **stderr** — never stdout, which the MCP server uses for its protocol. Log progress at INFO on the slow paths (per file in conversion, per document in `Ingestor`).
+
 Tests run under `pytest` (config in `pytest.ini`, `asyncio_mode = auto`). There is no linter or formatter configured yet. `requirements.txt` is the only dependency manifest (no lock file, no pyproject).
 
 Endpoints are mounted under `settings.api_prefix` (default `/api`): `/api/health`, `/api/preview`, `/api/ingest`, `/api/jobs/{job_id}`, `/api/prompt`. Only `/` is unprefixed.

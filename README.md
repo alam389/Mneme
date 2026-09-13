@@ -126,6 +126,7 @@ Create a `.env` in the project root:
 APP_NAME=Mneme
 ENVIRONMENT=development
 DEBUG=true
+LOG_LEVEL=INFO          # progress per file and per document; DEBUG for more
 API_PREFIX=/api
 
 # OpenRouter — chat completions and embeddings
@@ -217,6 +218,9 @@ python -m app.ingestion --replace --source /path/to/notes
 # Preview: convert and chunk only. No embedding, no storage, no Pinecone needed.
 python -m app.ingestion --preview --format text --limit 3 --source ~/docs
 ```
+
+Progress logs to stderr as each file converts and each document is stored,
+skipped, or fails, so a long run never looks hung. `LOG_LEVEL` controls it.
 
 `--preview --format text` prints a per-chunk listing with heading trails, which
 is the fastest way to eyeball chunking quality — and it costs nothing, since

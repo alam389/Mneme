@@ -100,6 +100,7 @@ class Ingestor:
         await asyncio.to_thread(self._converter.resolve, request.source)
 
         job = await self._jobs.create(request.source)
+        logger.info("job %s submitted for %s", job.id, request.source)
         task = asyncio.create_task(self._run(job.id, request))
         self._running.add(task)
         task.add_done_callback(self._running.discard)
@@ -129,6 +130,7 @@ class Ingestor:
             logger.exception("ingestion job %s failed", job_id)
             await self._jobs.fail(job_id, str(exc))
         else:
+            logger.info("job %s finished: %s", job_id, result.message)
             await self._jobs.succeed(job_id, result)
 
     async def _ingest(self, request: IngestionRequest) -> IngestionResult:
@@ -194,6 +196,7 @@ class Ingestor:
         """
         already = await self._store.stored_chunks(document.source)
         if already and not replace:
+            logger.info("skipped %s (%d chunks already stored)", document.source, already)
             return DocumentOutcome(
                 source=document.source, chunks=already, skipped=True
             )
@@ -201,7 +204,9 @@ class Ingestor:
         if already:
             # The Document may have shrunk; clear it so no Chunk outlives it.
             await self._store.forget(document.source)
+            logger.info("replacing %s (%d old chunks forgotten)", document.source, already)
 
         vectors = await self._embedder.embed([chunk.text for chunk in document.chunks])
         await self._store.store(document, vectors)
+        logger.info("stored %s (%d chunks)", document.source, len(document.chunks))
         return DocumentOutcome(source=document.source, chunks=len(document.chunks))

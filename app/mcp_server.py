@@ -16,7 +16,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from neo4j import AsyncDriver
 from pinecone import AsyncIndex
 
-from app.config import settings
+from app.config import configure_logging, settings
 from app.services.embedder import OpenRouterEmbedder
 from app.ingestion.ingestor import Ingestor
 from app.ports import Embedder
@@ -141,4 +141,5 @@ async def search_notes(ctx: Context, query: str, top_k: int = 5, namespace: str 
 
 
 if __name__ == "__main__":
+    configure_logging()
     mcp.run()

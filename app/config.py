@@ -1,3 +1,5 @@
+import logging
+import sys
 from functools import lru_cache
 from pathlib import Path
 
@@ -8,6 +10,7 @@ class Settings(BaseSettings):
     app_name: str = "Mneme"
     environment: str = "development"
     debug: bool = False
+    log_level: str = "INFO"
     api_prefix: str = "/api"
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
@@ -49,4 +52,22 @@ def get_settings() -> Settings:
 
 settings = get_settings()
 
-__all__ = ["Settings", "get_settings", "settings"]
+
+def configure_logging() -> None:
+    """Send the app's logs to the console.
+
+    Called once by each entrypoint. Only ``app.*`` loggers get LOG_LEVEL;
+    everything else stays at WARNING so Docling and the HTTP clients do not
+    drown the progress lines. Output goes to stderr on purpose: the MCP server
+    speaks its protocol over stdout, and a log line there would corrupt it.
+    """
+    logging.basicConfig(
+        level=logging.WARNING,
+        stream=sys.stderr,
+        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    logging.getLogger("app").setLevel(settings.log_level.upper())
+
+
+__all__ = ["Settings", "configure_logging", "get_settings", "settings"]

@@ -11,7 +11,7 @@ import sys
 
 from pydantic import ValidationError
 
-from app.config import settings
+from app.config import configure_logging, settings
 from app.ingestion.conversion import IngestionConfigError
 from app.services.embedder import EmbedderConfigError, OpenRouterEmbedder
 from app.ingestion.ingestor import Ingestor
@@ -111,6 +111,7 @@ def render_result(result: IngestionResult) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_logging()
     args = build_parser().parse_args(argv)
 
     if not args.source:

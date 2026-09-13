@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.api.routes import router
-from app.config import settings
+from app.config import configure_logging, settings
 from app.services.embedder import EmbedderConfigError, OpenRouterEmbedder
 from app.ingestion.ingestor import Ingestor
 from app.services.pinecone import open_vector_store
@@ -15,6 +15,7 @@ from app.services.graph_store import GraphStoreConfigError, open_graph_store
 from app.services.llm import LLMConfigError
 from app.services.vector_store import VectorStoreConfigError
 
+configure_logging()
 logger = logging.getLogger(__name__)
 
 
