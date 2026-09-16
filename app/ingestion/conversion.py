@@ -1,14 +1,21 @@
 import logging
+import sys
 from pathlib import Path
 
 from docling.datamodel.base_models import FormatToExtensions, InputFormat
-from docling.datamodel.pipeline_options import EasyOcrOptions, ThreadedPdfPipelineOptions
+from docling.datamodel.pipeline_options import (
+    EasyOcrOptions,
+    OcrMacOptions,
+    OcrOptions,
+    ThreadedPdfPipelineOptions,
+)
 from docling.document_converter import (
     DocumentConverter,
     ImageFormatOption,
     PdfFormatOption,
 )
 
+from app.config import settings
 from app.ingestion.chunking import DocumentChunker
 from app.models.schemas import ConvertedDocument, IngestionRequest
 
@@ -34,12 +41,26 @@ class IngestionConfigError(RuntimeError):
     """Raised when the requested source document cannot be found."""
 
 
-# Docling picks an OCR engine automatically, and the one it lands on defaults to a
-# Chinese recognition model, which garbles English text. Name the engine and the
-# language explicitly so that cannot happen.
-PIPELINE_OPTIONS = ThreadedPdfPipelineOptions(
-    ocr_options=EasyOcrOptions(lang=["en"]),
-)
+def _ocr_options() -> OcrOptions:
+    """Pick the OCR engine, always naming the language explicitly.
+
+    Docling's own auto-pick lands on a Chinese recognition model that garbles
+    English, so the engine is never left to it. On macOS the default is Apple
+    Vision via ``ocrmac``: EasyOCR has no MPS support, so it runs on CPU there
+    and is the slowest stage of the whole pipeline.
+    """
+    engine = settings.ocr_engine.lower()
+    if engine == "auto":
+        engine = "ocrmac" if sys.platform == "darwin" else "easyocr"
+
+    if engine == "ocrmac":
+        return OcrMacOptions(lang=["en-US"])
+    if engine == "easyocr":
+        return EasyOcrOptions(lang=["en"])
+    raise IngestionConfigError(f"unknown OCR_ENGINE: {settings.ocr_engine!r}")
+
+
+PIPELINE_OPTIONS = ThreadedPdfPipelineOptions(ocr_options=_ocr_options())
 
 
 class IngestionService:

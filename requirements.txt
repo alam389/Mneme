@@ -6,6 +6,7 @@ openai>=1.40.0
 pinecone>=9.0.0
 docling>=2.120.3
 easyocr>=1.7.2
+ocrmac>=1.0.0; sys_platform == "darwin"   # Apple Vision OCR; far faster than EasyOCR on a Mac
 mcp>=2.0.0
 neo4j>=5.28.0
 

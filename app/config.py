@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -24,6 +25,8 @@ class Settings(BaseSettings):
     embedding_timeout_seconds: int = 60
     embedding_batch_size: int = 96
     ingestion_timeout_seconds: int = 30
+    # auto = ocrmac on macOS (Apple Vision, GPU-accelerated), easyocr elsewhere.
+    ocr_engine: str = "auto"
     ingestion_doc_source: str = "/Users/anthonylam"
     default_source: str = ""
     hf_token: str = ""
@@ -51,6 +54,11 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
+if settings.hf_token:
+    # huggingface_hub (via docling/easyocr) reads HF_TOKEN straight from the
+    # process environment, not from this Settings object.
+    os.environ.setdefault("HF_TOKEN", settings.hf_token)
 
 
 def configure_logging() -> None:

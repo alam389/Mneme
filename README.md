@@ -25,7 +25,7 @@ MCP clients.
 source (file / folder / URL)
         │
         ▼
-  conversion.py      Docling → structured document (OCR pinned to English)
+  conversion.py      Docling → structured document (OCR: Apple Vision on macOS, EasyOCR elsewhere)
         │
         ▼
   chunking.py        HybridChunker → chunks carrying their heading trail
@@ -150,6 +150,9 @@ EMBEDDING_API_KEY=
 EMBEDDING_BASE_URL=
 EMBEDDING_TIMEOUT_SECONDS=60
 EMBEDDING_BATCH_SIZE=96
+
+# OCR engine: auto = ocrmac (Apple Vision) on macOS, easyocr elsewhere
+OCR_ENGINE=auto
 
 # Convenience
 DEFAULT_SOURCE=/path/to/your/notes

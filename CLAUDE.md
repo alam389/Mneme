@@ -40,6 +40,8 @@ Its interface is `preview` (convert and chunk, store nothing — needs no Pineco
 
 Ingestion **skips** Documents whose Chunks are already stored, checked before embedding so a skip costs one listing rather than an embedding bill. `IngestionRequest.replace` forces a re-embed and calls `forget()` first, so a Document that shrank leaves no orphaned Chunks behind.
 
+**OCR** is chosen by `OCR_ENGINE` (`auto`, default): `ocrmac` (Apple Vision) on macOS, EasyOCR elsewhere. EasyOCR has no MPS support and runs CPU-only on a Mac, which made it the slowest stage; `ocrmac` is a darwin-only dependency in `requirements.txt`. Language is always set explicitly (`en-US` / `en`) because Docling's own auto-pick lands on a Chinese model. Note `HybridChunker` emits nothing for a document that is *only* headings — a scanned page of large-font text can classify entirely as `section_header` and yield 0 chunks.
+
 `IngestionService` (conversion + chunking) is an **internal seam**: `Ingestor` takes it as a keyword argument so its own tests stay fast, but it is not part of the public interface and callers must not reach for it.
 
 **Config** — `app/config.py` defines a single `Settings` (pydantic-settings) loaded from `.env`, exported as the module-level `settings` singleton that every other module imports directly. `extra="ignore"` means unknown `.env` keys are silently dropped — adding a variable to `.env` does nothing until a matching field is declared on `Settings` (e.g. `EMBEDDING_MODEL_NAME` is currently in `.env` but has no field, so it is inert).
