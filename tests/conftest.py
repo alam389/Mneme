@@ -65,19 +65,27 @@ class FakeConverter:
     def __init__(self, documents: list[ConvertedDocument] | None = None) -> None:
         self.documents = documents if documents is not None else []
         self.missing: set[str] = set()
+        self.converted: list[str] = []
 
     def resolve(self, source: str) -> list[str]:
         if source in self.missing:
             raise FileNotFoundError(f"source not found: {source}")
         return [doc.source for doc in self.documents]
 
-    def process(self, payload: IngestionRequest):
-        total = sum(len(doc.chunks) for doc in self.documents)
+    def convert(self, sources: list[str]):
+        # Only the sources asked for, in the order asked -- the Ingestor now
+        # decides what to skip *before* conversion, and a test must see that.
+        self.converted = list(sources)
+        wanted = set(sources)
+        docs = [doc for doc in self.documents if doc.source in wanted]
+        total = sum(len(doc.chunks) for doc in docs)
         return (
-            self.documents,
-            f"converted {len(self.documents)} of {len(self.documents)} documents "
-            f"into {total} chunks",
+            docs,
+            f"converted {len(docs)} of {len(sources)} documents into {total} chunks",
         )
+
+    def process(self, payload: IngestionRequest):
+        return self.convert(self.resolve(payload.source))
 
 
 def document(source: str, *chunks: str) -> ConvertedDocument:

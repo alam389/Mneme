@@ -58,8 +58,8 @@ Three seams sit under it, each with a production adapter and a test adapter:
 live network.
 
 Documents that are already stored are **skipped** rather than re-embedded —
-checked before embedding, so re-running over a folder costs one listing instead
-of an embedding bill. Pass `replace` when a document's content has actually
+decided before conversion, so re-running over a folder costs one listing per
+file instead of a trip through Docling and an embedding bill. Pass `replace` when a document's content has actually
 changed: its old chunks are forgotten first, so a document that shrank leaves
 nothing stale behind.
 

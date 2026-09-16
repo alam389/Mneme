@@ -97,27 +97,35 @@ class IngestionService:
 
         raise IngestionConfigError(f"source not found: {path}")
 
-    def process(self, payload: IngestionRequest) -> tuple[list[ConvertedDocument], str]:
-        sources = self.resolve(payload.source)
-        logger.info("resolved %d document(s) from %s", len(sources), payload.source)
+    def convert(self, sources: list[str]) -> tuple[list[ConvertedDocument], str]:
+        """Convert an already-resolved list of Sources.
 
+        Docling reports only the basename of each input, so each Document's
+        source is taken from the list we handed in, relying on convert_all
+        preserving input order. The name check guards that assumption: if it
+        ever broke, two files called notes.md in different folders would
+        silently swap contents.
+        """
         # raises_on_error=False so one unreadable file does not abort the batch.
         # convert_all yields as each file finishes, so log per file: this is
         # the slow phase, and silence here looks like a hang.
         documents: list[ConvertedDocument] = []
-        for i, result in enumerate(
-            self._converter.convert_all(sources, raises_on_error=False), start=1
-        ):
-            name = str(result.input.file)
+        results = self._converter.convert_all(sources, raises_on_error=False)
+        for i, (source, result) in enumerate(zip(sources, results), start=1):
+            if Path(source).name != result.input.file.name:
+                raise RuntimeError(
+                    f"conversion results out of order: expected {source}, "
+                    f"got {result.input.file}"
+                )
             if result.document is None:
-                logger.warning("[%d/%d] failed to convert %s", i, len(sources), name)
+                logger.warning("[%d/%d] failed to convert %s", i, len(sources), source)
                 continue
             document = ConvertedDocument(
-                source=name, chunks=self._chunker.chunk(result.document)
+                source=source, chunks=self._chunker.chunk(result.document)
             )
             documents.append(document)
             logger.info(
-                "[%d/%d] converted %s -> %d chunks", i, len(sources), name, len(document.chunks)
+                "[%d/%d] converted %s -> %d chunks", i, len(sources), source, len(document.chunks)
             )
 
         failed = len(sources) - len(documents)
@@ -130,3 +138,9 @@ class IngestionService:
             message += f" ({failed} failed)"
 
         return documents, message
+
+    def process(self, payload: IngestionRequest) -> tuple[list[ConvertedDocument], str]:
+        """Resolve and convert a Source in one step -- what Preview needs."""
+        sources = self.resolve(payload.source)
+        logger.info("resolved %d document(s) from %s", len(sources), payload.source)
+        return self.convert(sources)

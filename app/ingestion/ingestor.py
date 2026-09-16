@@ -134,7 +134,34 @@ class Ingestor:
             await self._jobs.succeed(job_id, result)
 
     async def _ingest(self, request: IngestionRequest) -> IngestionResult:
-        documents, message = await asyncio.to_thread(self._converter.process, request)
+        sources = await asyncio.to_thread(self._converter.resolve, request.source)
+        logger.info("resolved %d document(s) from %s", len(sources), request.source)
+
+        # Decide what to skip before converting anything: conversion is the
+        # slow phase, and a Source that is already stored should cost one
+        # listing, not a trip through Docling.
+        outcomes: list[DocumentOutcome] = []
+        to_convert = sources
+        if not request.replace:
+            counts = await asyncio.gather(
+                *(self._store.stored_chunks(source) for source in sources)
+            )
+            to_convert = []
+            for source, count in zip(sources, counts):
+                if count:
+                    logger.info("skipped %s (%d chunks already stored)", source, count)
+                    outcomes.append(
+                        DocumentOutcome(source=source, chunks=count, skipped=True)
+                    )
+                else:
+                    to_convert.append(source)
+
+        documents: list[ConvertedDocument] = []
+        message = f"skipped {len(outcomes)} of {len(sources)} documents already stored"
+        if to_convert:
+            documents, message = await asyncio.to_thread(
+                self._converter.convert, to_convert
+            )
 
         chunked = [document for document in documents if document.chunks]
         results = await asyncio.gather(
@@ -142,7 +169,6 @@ class Ingestor:
             return_exceptions=True,
         )
 
-        outcomes: list[DocumentOutcome] = []
         for document, result in zip(chunked, results):
             if isinstance(result, FATAL_ERRORS):
                 raise result
@@ -171,7 +197,7 @@ class Ingestor:
         ]
         skipped = [outcome for outcome in outcomes if outcome.skipped]
         failed = [outcome for outcome in outcomes if not outcome.ok]
-        if skipped:
+        if skipped and to_convert:
             message += f", {len(skipped)} already stored"
         if failed:
             message += f", {len(failed)} document(s) failed to embed"
@@ -189,22 +215,16 @@ class Ingestor:
     async def _store_document(
         self, document: ConvertedDocument, replace: bool
     ) -> DocumentOutcome:
-        """Embed and store one Document, unless it is already stored.
+        """Embed and store one Document.
 
-        The check happens before embedding, so a Document that is already
-        stored costs nothing rather than being re-embedded and overwritten.
+        Skipping was decided before conversion; by the time a Document reaches
+        here it is either new or being replaced.
         """
-        already = await self._store.stored_chunks(document.source)
-        if already and not replace:
-            logger.info("skipped %s (%d chunks already stored)", document.source, already)
-            return DocumentOutcome(
-                source=document.source, chunks=already, skipped=True
-            )
-
-        if already:
+        if replace:
             # The Document may have shrunk; clear it so no Chunk outlives it.
-            await self._store.forget(document.source)
-            logger.info("replacing %s (%d old chunks forgotten)", document.source, already)
+            forgotten = await self._store.forget(document.source)
+            if forgotten:
+                logger.info("replacing %s (%d old chunks forgotten)", document.source, forgotten)
 
         vectors = await self._embedder.embed([chunk.text for chunk in document.chunks])
         await self._store.store(document, vectors)

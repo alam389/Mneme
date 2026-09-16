@@ -86,16 +86,21 @@ async def test_already_stored_document_is_skipped_without_embedding(store, embed
     await make(docs, embedder, store).ingest(request())
     embedder.batches.clear()
 
-    job = await make(docs, embedder, store).ingest(request())
+    converter = FakeConverter(docs)
+    job = await Ingestor(
+        embedder, store, InMemoryJobStore(), converter=converter
+    ).ingest(request())
 
     outcome = job.result.documents[0]
     assert outcome.skipped is True
     assert outcome.chunks == 2
     assert job.result.skipped == 1
     assert job.result.stored == 0
-    # The point of skipping: no second embedding bill.
+    # The point of skipping: no second embedding bill -- and no second trip
+    # through Docling either, which is the expensive part.
     assert embedder.batches == []
-    assert "1 already stored" in job.result.message
+    assert converter.converted == []
+    assert "skipped 1 of 1" in job.result.message
 
 
 async def test_replace_re_embeds_and_clears_the_old_chunks(store, embedder):
@@ -121,6 +126,20 @@ async def test_a_new_document_is_not_forgotten_first(store, embedder):
     await make([document("/notes/a.pdf", "one")], embedder, store).ingest(request())
 
     assert store.forgotten == []
+
+
+async def test_only_unstored_documents_are_converted(store, embedder):
+    docs = [document("/notes/old.pdf", "x"), document("/notes/new.pdf", "y")]
+    await make([docs[0]], embedder, store).ingest(request())
+
+    converter = FakeConverter(docs)
+    job = await Ingestor(
+        embedder, store, InMemoryJobStore(), converter=converter
+    ).ingest(request())
+
+    assert converter.converted == ["/notes/new.pdf"]
+    assert job.result.skipped == 1
+    assert job.result.stored == 1
 
 
 # -- partial failure ------------------------------------------------------
