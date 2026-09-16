@@ -30,3 +30,7 @@ dist/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Claude Code
+.claude/
+CLAUDE.md

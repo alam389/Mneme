@@ -68,15 +68,8 @@ class PineconeVectorStore:
             vectors=records, namespace=_namespace_for(document.source)
         )
 
-    async def stored_ids(self, source: str) -> list[str]:
-        """Every record id currently stored for a Source.
-
-        Ids carry the Document id as a prefix, so this answers "is this Source
-        already ingested, and how much of it" with one listing and no reads.
-        """
-        prefix = f"{_document_id(source)}:"
-        namespace = _namespace_for(source)
-
+    async def _list_ids(self, namespace: str, prefix: str | None = None) -> list[str]:
+        """Every record id in a Namespace, optionally under a prefix. Ids only."""
         ids: list[str] = []
         token: str | None = None
         while True:
@@ -88,9 +81,41 @@ class PineconeVectorStore:
             if not token:
                 return ids
 
+    async def stored_ids(self, source: str) -> list[str]:
+        """Every record id currently stored for a Source.
+
+        Ids carry the Document id as a prefix, so this answers "is this Source
+        already ingested, and how much of it" with one listing and no reads.
+        """
+        return await self._list_ids(
+            _namespace_for(source), prefix=f"{_document_id(source)}:"
+        )
+
     async def stored_chunks(self, source: str) -> int:
-        """How many Chunks are stored for a Source; 0 means it was never ingested."""
+        """How many Chunks are stored for one Source; 0 means never ingested."""
         return len(await self.stored_ids(source))
+
+    async def stored_chunks_for(self, sources: list[str]) -> dict[str, int]:
+        """Chunk counts for many Sources, one listing per Namespace.
+
+        A folder of two hundred files is one round trip, not two hundred: the
+        whole Namespace is listed once and every id is attributed back to its
+        Source by the Document-id prefix it carries.
+        """
+        counts = {source: 0 for source in sources}
+        by_namespace: dict[str, dict[str, str]] = {}
+        for source in sources:
+            by_namespace.setdefault(_namespace_for(source), {})[
+                _document_id(source)
+            ] = source
+
+        for namespace, wanted in by_namespace.items():
+            for record_id in await self._list_ids(namespace):
+                doc_id, _, _ = record_id.partition(":")
+                source = wanted.get(doc_id)
+                if source is not None:
+                    counts[source] += 1
+        return counts
 
     async def forget(self, source: str) -> int:
         """Delete every record stored for a Source, returning how many.

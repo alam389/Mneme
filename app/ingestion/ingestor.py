@@ -138,16 +138,15 @@ class Ingestor:
         logger.info("resolved %d document(s) from %s", len(sources), request.source)
 
         # Decide what to skip before converting anything: conversion is the
-        # slow phase, and a Source that is already stored should cost one
-        # listing, not a trip through Docling.
+        # slow phase, and a Source that is already stored should cost a share
+        # of one listing per folder, not a trip through Docling.
         outcomes: list[DocumentOutcome] = []
         to_convert = sources
         if not request.replace:
-            counts = await asyncio.gather(
-                *(self._store.stored_chunks(source) for source in sources)
-            )
+            counts = await self._store.stored_chunks_for(sources)
             to_convert = []
-            for source, count in zip(sources, counts):
+            for source in sources:
+                count = counts.get(source, 0)
                 if count:
                     logger.info("skipped %s (%d chunks already stored)", source, count)
                     outcomes.append(

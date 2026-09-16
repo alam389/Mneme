@@ -20,6 +20,7 @@ class FakeAsyncIndex:
         self.deleted: list[tuple[list[str], str]] = []
         self.page_size = page_size
         self.matches: list = []
+        self.listings = 0
 
     async def upsert(self, vectors, namespace=""):
         self.records.setdefault(namespace, []).extend(vectors)
@@ -32,8 +33,11 @@ class FakeAsyncIndex:
     async def list_paginated(
         self, prefix=None, namespace="", pagination_token=None, **kwargs
     ):
+        self.listings += 1
         matching = [
-            r for r in self.records.get(namespace, []) if r["id"].startswith(prefix)
+            r
+            for r in self.records.get(namespace, [])
+            if prefix is None or r["id"].startswith(prefix)
         ]
         start = int(pagination_token or 0)
         page = matching[start : start + self.page_size]
@@ -132,6 +136,37 @@ async def test_stored_chunks_counts_only_that_source(store):
     await store.store(document("/notes/b.pdf", "x"), [[3.0]])
 
     assert await store.stored_chunks("/notes/a.pdf") == 2
+
+
+async def test_stored_chunks_for_answers_many_sources(store):
+    await store.store(document("/notes/a.pdf", "one", "two"), [[1.0], [2.0]])
+    await store.store(document("/notes/b.pdf", "x"), [[3.0]])
+
+    counts = await store.stored_chunks_for(["/notes/a.pdf", "/notes/b.pdf", "/notes/new.pdf"])
+
+    assert counts == {"/notes/a.pdf": 2, "/notes/b.pdf": 1, "/notes/new.pdf": 0}
+
+
+async def test_stored_chunks_for_lists_each_namespace_once(store, index):
+    for name in "abcdef":
+        await store.store(document(f"/notes/{name}.pdf", "x"), [[1.0]])
+    await store.store(document("/other/z.pdf", "x"), [[1.0]])
+    index.listings = 0
+
+    sources = [f"/notes/{n}.pdf" for n in "abcdef"] + ["/other/z.pdf"]
+    await store.stored_chunks_for(sources)
+
+    # Seven files across two folders: two listings, not seven.
+    assert index.listings == 2
+
+
+async def test_stored_chunks_for_ignores_other_documents_in_the_namespace(store):
+    await store.store(document("/notes/a.pdf", "one", "two"), [[1.0], [2.0]])
+    await store.store(document("/notes/b.pdf", "x", "y", "z"), [[1.0]] * 3)
+
+    counts = await store.stored_chunks_for(["/notes/a.pdf"])
+
+    assert counts == {"/notes/a.pdf": 2}
 
 
 async def test_forget_removes_only_that_source(store, index):

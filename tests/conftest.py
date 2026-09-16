@@ -42,8 +42,8 @@ class FakeVectorStore:
             raise RuntimeError("vector store unavailable")
         self.stored[document.source] = list(vectors)
 
-    async def stored_chunks(self, source: str) -> int:
-        return len(self.stored.get(source, []))
+    async def stored_chunks_for(self, sources: list[str]) -> dict[str, int]:
+        return {source: len(self.stored.get(source, [])) for source in sources}
 
     async def forget(self, source: str) -> int:
         count = len(self.stored.pop(source, []))

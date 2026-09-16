@@ -39,8 +39,12 @@ class VectorStore(Protocol):
         """Write one Document's Chunks."""
         ...
 
-    async def stored_chunks(self, source: str) -> int:
-        """How many Chunks are stored for a Source; 0 means never ingested."""
+    async def stored_chunks_for(self, sources: list[str]) -> dict[str, int]:
+        """How many Chunks are stored for each Source; 0 means never ingested.
+
+        Batched so the adapter can answer for a whole folder with one listing
+        rather than one round trip per file.
+        """
         ...
 
     async def forget(self, source: str) -> int:
